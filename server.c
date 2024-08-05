@@ -98,7 +98,7 @@ int main(void) {
       // child process
       close(sock_fd);
       char buffer[1024];
-      sprintf(buffer, "hello!\n");
+      sprintf(buffer, "hello!");
       // TODO: 指定した全データを送れなかった場合のハンドリングを行う
       if (send(new_process_fd, buffer, strlen(buffer), 0) == -1) {
         perror("send");
