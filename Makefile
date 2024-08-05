@@ -1,22 +1,24 @@
 CC = gcc
 CFLAGS = -Wall -Wextra -O2
-TARGET = server
-SRCS = server.c
-OBJS = $(SRCS:.c=.o)
+SERVER_TARGET = server
+CLIENT_TARGET = client
+SERVER_SRCS = server.c
+CLIENT_SRCS = client.c
+SERVER_OBJS = $(SERVER_SRCS:.c=.o)
+CLIENT_OBJS = $(CLIENT_SRCS:.c=.o)
 
-all: $(TARGET)
+all: $(SERVER_TARGET) $(CLIENT_TARGET)
 
-$(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) -o $(TARGET) $(OBJS)
+$(SERVER_TARGET): $(SERVER_OBJS)
+	$(CC) $(CFLAGS) -o $(SERVER_TARGET) $(SERVER_OBJS)
+
+$(CLIENT_TARGET): $(CLIENT_OBJS)
+	$(CC) $(CFLAGS) -o $(CLIENT_TARGET) $(CLIENT_OBJS)
 
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-run: $(TARGET)
-	./$(TARGET)
-
 clean:
-	rm -f $(OBJS) $(TARGET)
+	rm -f $(SERVER_OBJS) $(CLIENT_OBJS) $(SERVER_TARGET) $(CLIENT_TARGET)
 
-.PHONY: all run clean
-
+.PHONY: all run_server run_client clean
