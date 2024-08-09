@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -O2
+CFLAGS = -Wall -Wextra -O2 -fsanitize=thread -Wno-unused-parameter
 SERVER_TARGET = server
 CLIENT_TARGET = client
 SERVER_SRCS = server.c

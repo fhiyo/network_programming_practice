@@ -1,73 +1,66 @@
 #include <stdio.h>
-#include <netdb.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <netdb.h>
 #include <unistd.h>
-#include <arpa/inet.h>
 
-#define PORT "3080"
-#define MAXDATASIZE 100
-
-void* get_in_addr(struct sockaddr* sa) {
-  if (sa->sa_family == AF_INET) {
-    return &(((struct sockaddr_in*)sa)->sin_addr);
-  }
-  return &(((struct sockaddr_in6*)sa)->sin6_addr);
-}
+#define BUFFER_SIZE 1024
 
 int main(int argc, char** argv) {
-  if (argc != 2) {
-    fprintf(stderr, "Usage: ./%s <server_name>\n", argv[0]);
+  if (argc != 3) {
+    fprintf(stderr, "Usage: %s <SERVER_NAME> <PORT>\n", argv[0]);
     return 1;
   }
 
-  int sock_fd;
-  int rv;
+  char* server_name = argv[1];
+  char* port = argv[2]; // TODO: 不正な文字列が渡されたときのエラーハンドリング
   struct addrinfo hints;
-  struct addrinfo *server_info;
-  struct addrinfo *p;
-  char* server_name;
-  char s[INET6_ADDRSTRLEN];
-  int num_bytes;
-  char buffer[MAXDATASIZE];
-
-  server_name = argv[1];
+  struct addrinfo* server_info;
+  int rv;
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_UNSPEC;
   hints.ai_socktype = SOCK_STREAM;
-  if ((rv = getaddrinfo(server_name, PORT, &hints, &server_info)) != 0) {
+  if ((rv = getaddrinfo(server_name, port, &hints, &server_info)) != 0) {
     fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(rv));
     return 1;
   }
 
+  int server_sock_fd;
+  struct addrinfo* p;
   for (p = server_info; p != NULL; p = p->ai_next) {
-    if ((sock_fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
-      perror("server: socket");
+    if ((server_sock_fd = socket(p->ai_family, p->ai_socktype, p->ai_protocol)) == -1) {
+      perror("socket");
       continue;
     }
-    if (connect(sock_fd, p->ai_addr, p->ai_addrlen) == -1) {
-      close(sock_fd);
-      perror("client: connect");
+    if (connect(server_sock_fd, p->ai_addr, p->ai_addrlen) == -1) {
+      perror("connect");
       continue;
     }
-    break;
+    break; // connect is succeeded
   }
   if (!p) {
-    fprintf(stderr, "client: failed to connect\n");
+    fprintf(stderr, "client: failed to socket or connect");
     return 1;
   }
-  inet_ntop(p->ai_family, get_in_addr(p->ai_addr), s, sizeof(s));
-  printf("client: connecting to %s\n", s);
   freeaddrinfo(server_info);
-  if ((num_bytes = recv(sock_fd, buffer, MAXDATASIZE - 1, 0)) == -1) {
-    perror("recv");
-    return 1;
-  }
-  printf("length of received bytes: %d\n", num_bytes);
-  buffer[num_bytes] = '\0';
-  printf("client: received '%s'\n", buffer);
-  close(sock_fd);
 
-  printf("terminated\n");
+  char buffer[BUFFER_SIZE];
+  size_t total_received = 0;
+  while (total_received < BUFFER_SIZE) {
+    ssize_t received = recv(server_sock_fd, buffer + total_received, BUFFER_SIZE - total_received, 0);
+    if (received == -1) {
+      perror("recv");
+      close(server_sock_fd); // TODO: エラーハンドリングを行うか決める
+      return 1;
+    }
+    if (received == 0) {
+      break;
+    }
+    total_received += received;
+  }
+  printf("received from server: %s\n", buffer);
+  close(server_sock_fd);
+
   return 0;
 }
