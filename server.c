@@ -1,58 +1,87 @@
 #include <stdio.h>
-#include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <netdb.h>
 #include <unistd.h>
-#include <netinet/in.h>
+#include <errno.h>
+#include <pthread.h>
 
 #define BUFFER_SIZE 1024
 #define BACKLOG 10
 
-int cnt = 0;
 pthread_mutex_t mutex;
+int count = 0;
 
 void* client_handler(void* arg) {
-  int client_sock_fd = *(int*)arg;
-  free(arg);
   if (pthread_detach(pthread_self()) != 0) {
     perror("pthread_detach");
     exit(1);
   }
+
+  int client_sock_fd = *(int*)arg;
+  free(arg);
   pthread_mutex_lock(&mutex);
-  int send_number = cnt++;
+  int send_number = ++count;
   pthread_mutex_unlock(&mutex);
+
   char buffer[BUFFER_SIZE];
-  sprintf(buffer, "%d", send_number);
+  snprintf(buffer, BUFFER_SIZE, "%d", send_number);
+  size_t length = strlen(buffer) + 1;
   size_t total_sent = 0;
-  size_t to_send = strlen(buffer) + 1;
-  while (total_sent < to_send) {
-    ssize_t sent = send(client_sock_fd, buffer + total_sent, to_send - total_sent, 0);
+  while (total_sent < length) {
+    ssize_t sent = send(client_sock_fd, buffer + total_sent, length - total_sent, 0);
     if (sent == -1) {
       perror("send");
-      close(client_sock_fd); // TODO: closeのエラーハンドリングを行うか決めてやるなら実装する
-      return NULL;
+      exit(1);
     }
     total_sent += sent;
   }
+  printf("sending data: %s\n", buffer);
+
   close(client_sock_fd);
   return NULL;
 }
 
+int parse_port(char* port_str) {
+  int port = atoi(port_str);
+  char s[6]; /* maximum port number is 65535, so number of digit is less than or equal to 5 (+ null character) */
+  int n = snprintf(s, strlen(port_str) + 1, "%d", port);
+  if (n < 0) {
+    perror("snprintf");
+    exit(1);
+  }
+  if ((strcmp(s, port_str) != 0) || port < 0 || port > 65535) {
+    fprintf(stderr, "Invalid argument. port: %s\n", port_str);
+    return -1;
+  }
+  return port;
+}
+
 int main(int argc, char** argv) {
   if (argc != 2) {
-    fprintf(stderr, "Usage: ./%s <port>\n", argv[0]);
+    fprintf(stderr, "Usage: %s <PORT>\n", argv[0]);
     return 1;
   }
-  int port;
-  if ((port = atoi(argv[1])) == 0) {
-    perror("failed to parse port string");
+  int port = parse_port(argv[1]);
+  if (port < 0) {
+    fprintf(stderr, "Invalid port. port: %s\n", argv[1]);
     return 1;
   }
 
-  int server_fd;
-  if ((server_fd = socket(AF_INET, SOCK_STREAM, 0)) == 0) {
-    perror("socket failed");
+  int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (sock_fd == -1) {
+    perror("socket");
+    return 1;
+  }
+  /*
+    avoid "Address already in use" when the socket's state is TIME_WAIT
+    ref: https://qiita.com/bamchoh/items/1dd44ba1fbef43b5284b
+   */
+  int yes = 1;
+  int sockopt_ret = setsockopt(sock_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof(yes));
+  if (sockopt_ret) {
+    perror("setsockopt");
     return 1;
   }
 
@@ -61,40 +90,33 @@ int main(int argc, char** argv) {
   address.sin_addr.s_addr = INADDR_ANY;
   address.sin_port = htons(port);
 
-  if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
+  if (bind(sock_fd, (struct sockaddr*)&address, sizeof(address)) == -1) {
     perror("bind");
     return 1;
   }
-
-  if (listen(server_fd, BACKLOG) == -1) {
+  if (listen(sock_fd, BACKLOG) == -1) {
     perror("listen");
-    close(server_fd);
     return 1;
   }
+  printf("listening...\n");
 
   pthread_mutex_init(&mutex, NULL);
-
-  int addr_len = sizeof(address);
+  int address_length = sizeof(address);
   while (1) {
-    int* new_sock_fd = malloc(sizeof(int));
-    if (!new_sock_fd) {
-      perror("malloc");
-      continue;
-    }
-    if ((*new_sock_fd = accept(server_fd, (struct sockaddr*)&address, (socklen_t*)&addr_len)) == -1) {
-      perror("accept");
-      continue;
-    }
+    int* client_sock_fd = malloc(sizeof(int));
+    *client_sock_fd = accept(sock_fd, (struct sockaddr*)&address, (socklen_t*)&address_length);
     pthread_t thread_id;
-    if (pthread_create(&thread_id, NULL, client_handler, (void*)new_sock_fd) != 0) {
+    int rv = pthread_create(&thread_id, NULL, client_handler, (void*)client_sock_fd);
+    if (rv != 0) {
+      errno = rv;
       perror("pthread_create");
-      close(*new_sock_fd);
-      free(new_sock_fd);
+      close(*client_sock_fd);
+      free(client_sock_fd);
     }
   }
 
+  close(sock_fd);
   pthread_mutex_destroy(&mutex);
-  close(server_fd);
 
   return 0;
 }
