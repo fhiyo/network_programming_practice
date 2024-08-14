@@ -7,13 +7,56 @@
 #include <errno.h>
 #include <unistd.h>
 #include <pthread.h>
+#include <time.h>
 
 #define BUFFER_SIZE 1024
+#define MAX_RAND_NUM 10000
 
 struct thread_arg {
   int request_number;
   struct addrinfo server_info;
 };
+
+int get_random_number() {
+  /*
+    [ref]
+    - https://stackoverflow.com/a/49880109/7503647
+    - https://ericlippert.com/2013/12/16/how-much-bias-is-introduced-by-the-remainder-technique/
+  */
+  const int threshold = RAND_MAX - RAND_MAX % MAX_RAND_NUM;
+  int val = rand();
+  while (val >= threshold) {
+    val = rand();
+  }
+  return val % MAX_RAND_NUM;
+}
+
+void recv_all(int sock_fd, char* buffer, size_t length) {
+  size_t total_received = 0;
+  while (total_received < length) {
+    ssize_t received = recv(sock_fd, buffer + total_received, length - total_received, 0);
+    if (received == -1) {
+      perror("recv");
+      exit(1);
+    }
+    if (!received) {
+      break;
+    }
+    total_received += received;
+  }
+}
+
+void send_all(int sock_fd, char* buffer, size_t length) {
+  size_t total_sent = 0;
+  while (total_sent < length) {
+    ssize_t sent = send(sock_fd, buffer + total_sent, length - total_sent, 0);
+    if (sent == -1) {
+      perror("send");
+      exit(1);
+    }
+    total_sent += sent;
+  }
+}
 
 void* request_handler(void* arg) {
   struct thread_arg targ = *(struct thread_arg*)arg;
@@ -37,20 +80,25 @@ void* request_handler(void* arg) {
       exit(1);
     }
 
-    char buffer[BUFFER_SIZE];
-    size_t total_received = 0;
-    while (total_received < BUFFER_SIZE) {
-      int received = recv(sock_fd, buffer + total_received, BUFFER_SIZE - total_received, 0);
-      if (received == -1) {
-        perror("recv");
-        exit(1);
-      }
-      if (!received) {
-        break;
-      }
-      total_received += received;
+    int number;
+    recv_all(sock_fd, (char*)&number, sizeof(number));
+    printf("[thread_id: %d] received data: %d\n", gettid(), number);
+    size_t numbers_array_size = sizeof(int) * number;
+    int* random_numbers = malloc(numbers_array_size);
+    for (int i = 0; i < number; i++) {
+      random_numbers[i] = get_random_number();
+      printf("random_number: %d\n", random_numbers[i]);
     }
-    printf("[thread_id: %d] received data: %s\n", gettid(), buffer);
+    printf("----------\n");
+    send_all(sock_fd, (char*)random_numbers, numbers_array_size);
+    free(random_numbers);
+    int* sorted_numbers = malloc(numbers_array_size);
+    recv_all(sock_fd, (char*)sorted_numbers, numbers_array_size);
+    for (int i = 0; i < number; i++) {
+      printf("sorted_number: %d\n", sorted_numbers[i]);
+    }
+    printf("\n");
+
     close(sock_fd);
   }
 
@@ -68,6 +116,7 @@ int main(int argc, char** argv) {
   int request_number = atoi(argv[3]);
   int client_number = atoi(argv[4]);
 
+  srand(time(NULL));
   struct addrinfo hints;
   memset(&hints, 0, sizeof(hints));
   hints.ai_family = AF_UNSPEC;
