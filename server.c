@@ -1,50 +1,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/socket.h>
 #include <netdb.h>
 #include <unistd.h>
 #include <errno.h>
 #include <pthread.h>
+
+#include "utils.h"
 
 #define BUFFER_SIZE 1024
 #define BACKLOG 10
 
 pthread_mutex_t mutex;
 int count = 0;
-
-void recv_all(int sock_fd, char* buffer, size_t length) {
-  size_t total_received = 0;
-  while (total_received < length) {
-    ssize_t received = recv(sock_fd, buffer + total_received, length - total_received, 0);
-    if (received == -1) {
-      perror("recv");
-      exit(1);
-    }
-    if (!received) {
-      break;
-    }
-    total_received += received;
-  }
-}
-
-void send_all(int sock_fd, char* buffer, size_t length) {
-  size_t total_sent = 0;
-  while (total_sent < length) {
-    ssize_t sent = send(sock_fd, buffer + total_sent, length - total_sent, 0);
-    if (sent == -1) {
-      perror("send");
-      exit(1);
-    }
-    total_sent += sent;
-  }
-}
-
-int compare(const void* a, const void* b) {
-  int arg1 = *(const int*)a;
-  int arg2 = *(const int*)b;
-  return (arg1 > arg2) - (arg1 < arg2);
-}
 
 void* client_handler(void* arg) {
   if (pthread_detach(pthread_self()) != 0) {
@@ -59,20 +27,28 @@ void* client_handler(void* arg) {
   pthread_mutex_unlock(&mutex);
 
   send_all(client_sock_fd, (char*)&send_number, sizeof(int));
-  printf("sending data: %d\n", send_number);
   size_t numbers_array_size = sizeof(int) * send_number;
-  int* numbers = malloc(numbers_array_size);
-  recv_all(client_sock_fd, (char*)numbers, numbers_array_size);
-  for (int i = 0; i < send_number; i++) {
-    printf("received_number: %d\n", numbers[i]);
+  int* received_numbers = malloc(numbers_array_size);
+  if (!received_numbers) {
+    perror("malloc");
+    exit(1);
   }
-  qsort(numbers, send_number, sizeof(int), compare);
-  printf("[sorted received number]\n");
-  for (int i = 0; i < send_number; i++) {
-    printf("received_number: %d\n", numbers[i]);
+  recv_all(client_sock_fd, (char*)received_numbers, numbers_array_size);
+  int* sorted_numbers = malloc(numbers_array_size);
+  if (!sorted_numbers) {
+    perror("malloc");
+    exit(1);
   }
-  printf("\n");
-  send_all(client_sock_fd, (char*)numbers, numbers_array_size);
+  memcpy(sorted_numbers, received_numbers, numbers_array_size);
+  qsort(sorted_numbers, send_number, sizeof(int), compare_ints);
+  send_all(client_sock_fd, (char*)sorted_numbers, numbers_array_size);
+
+  pthread_mutex_lock(&mutex);
+  printf("sending data: %d\n", send_number);
+  print_array((const void*)received_numbers, sizeof(int), (size_t)send_number, "received_numbers: ", "", print_int);
+  print_array((const void*)sorted_numbers, sizeof(int), (size_t)send_number, "sorted_numbers: ", "", print_int);
+  printf("--------\n");
+  pthread_mutex_unlock(&mutex);
 
   close(client_sock_fd);
   return NULL;
@@ -139,6 +115,10 @@ int main(int argc, char** argv) {
   int address_length = sizeof(address);
   while (1) {
     int* client_sock_fd = malloc(sizeof(int));
+    if (!client_sock_fd) {
+      perror("malloc");
+      exit(1);
+    }
     *client_sock_fd = accept(sock_fd, (struct sockaddr*)&address, (socklen_t*)&address_length);
     pthread_t thread_id;
     int rv = pthread_create(&thread_id, NULL, client_handler, (void*)client_sock_fd);

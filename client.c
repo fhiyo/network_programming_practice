@@ -1,7 +1,6 @@
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/socket.h>
 #include <string.h>
 #include <netdb.h>
 #include <errno.h>
@@ -9,8 +8,12 @@
 #include <pthread.h>
 #include <time.h>
 
+#include "utils.h"
+
 #define BUFFER_SIZE 1024
 #define MAX_RAND_NUM 10000
+
+pthread_mutex_t mutex;
 
 struct thread_arg {
   int request_number;
@@ -29,33 +32,6 @@ int get_random_number() {
     val = rand();
   }
   return val % MAX_RAND_NUM;
-}
-
-void recv_all(int sock_fd, char* buffer, size_t length) {
-  size_t total_received = 0;
-  while (total_received < length) {
-    ssize_t received = recv(sock_fd, buffer + total_received, length - total_received, 0);
-    if (received == -1) {
-      perror("recv");
-      exit(1);
-    }
-    if (!received) {
-      break;
-    }
-    total_received += received;
-  }
-}
-
-void send_all(int sock_fd, char* buffer, size_t length) {
-  size_t total_sent = 0;
-  while (total_sent < length) {
-    ssize_t sent = send(sock_fd, buffer + total_sent, length - total_sent, 0);
-    if (sent == -1) {
-      perror("send");
-      exit(1);
-    }
-    total_sent += sent;
-  }
 }
 
 void* request_handler(void* arg) {
@@ -82,23 +58,32 @@ void* request_handler(void* arg) {
 
     int number;
     recv_all(sock_fd, (char*)&number, sizeof(number));
-    printf("[thread_id: %d] received data: %d\n", gettid(), number);
     size_t numbers_array_size = sizeof(int) * number;
     int* random_numbers = malloc(numbers_array_size);
+    if (!random_numbers) {
+      perror("malloc");
+      exit(1);
+    }
     for (int i = 0; i < number; i++) {
       random_numbers[i] = get_random_number();
-      printf("random_number: %d\n", random_numbers[i]);
     }
-    printf("----------\n");
     send_all(sock_fd, (char*)random_numbers, numbers_array_size);
-    free(random_numbers);
     int* sorted_numbers = malloc(numbers_array_size);
-    recv_all(sock_fd, (char*)sorted_numbers, numbers_array_size);
-    for (int i = 0; i < number; i++) {
-      printf("sorted_number: %d\n", sorted_numbers[i]);
+    if (!sorted_numbers) {
+      perror("malloc");
+      exit(1);
     }
-    printf("\n");
+    recv_all(sock_fd, (char*)sorted_numbers, numbers_array_size);
 
+    /* sacrifacing speed for this output */
+    pthread_mutex_lock(&mutex);
+    printf("[thread_id: %d] received data: %d\n", gettid(), number);
+    print_array((const void*)random_numbers, sizeof(int), (size_t)number, "random_numbers: ", "", print_int);
+    print_array((const void*)sorted_numbers, sizeof(int), (size_t)number, "sorted_numbers: ", "", print_int);
+    printf("--------\n");
+    pthread_mutex_unlock(&mutex);
+
+    free(random_numbers);
     close(sock_fd);
   }
 
@@ -128,9 +113,14 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  pthread_mutex_init(&mutex, NULL);
   int rest_request_number = request_number;
   int per_thread_request_number = request_number / client_number;
   struct thread_arg* thread_args = (struct thread_arg*)malloc(sizeof(struct thread_arg) * client_number);
+  if (!thread_args) {
+    perror("malloc");
+    exit(1);
+  }
   pthread_t thread_ids[client_number];
   for (int i = 0; i < client_number; i++) {
     if (i < client_number - 1) {
@@ -154,6 +144,7 @@ int main(int argc, char** argv) {
   }
   freeaddrinfo(server_info);
   free(thread_args);
+  pthread_mutex_destroy(&mutex);
 
   return 0;
 }
