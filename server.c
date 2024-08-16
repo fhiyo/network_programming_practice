@@ -5,14 +5,24 @@
 #include <unistd.h>
 #include <errno.h>
 #include <pthread.h>
+#include <signal.h>
 
 #include "utils.h"
 
 #define BUFFER_SIZE 1024
 #define BACKLOG 10
 
-pthread_mutex_t mutex;
+pthread_mutex_t send_number_counter_mutex;
+pthread_mutex_t output_mutex;
+pthread_mutex_t client_counter_mutex;
 int count = 0;
+int sock_fd;
+volatile sig_atomic_t working = 1;
+int active_clients = 0;
+
+void sigaction_handler(int signum) {
+  working = 0;
+}
 
 void* client_handler(void* arg) {
   if (pthread_detach(pthread_self()) != 0) {
@@ -22,35 +32,56 @@ void* client_handler(void* arg) {
 
   int client_sock_fd = *(int*)arg;
   free(arg);
-  pthread_mutex_lock(&mutex);
+  pthread_mutex_lock(&send_number_counter_mutex);
   int send_number = ++count;
-  pthread_mutex_unlock(&mutex);
+  pthread_mutex_unlock(&send_number_counter_mutex);
+  pthread_mutex_lock(&client_counter_mutex);
+  active_clients++;
+  pthread_mutex_unlock(&client_counter_mutex);
 
-  send_all(client_sock_fd, (char*)&send_number, sizeof(int));
+  if (send_all(client_sock_fd, (char*)&send_number, sizeof(int)) == -1) {
+    fprintf(stderr, "send_all failed\n");
+    goto cleanup;
+  }
   size_t numbers_array_size = sizeof(int) * send_number;
   int* received_numbers = malloc(numbers_array_size);
   if (!received_numbers) {
     perror("malloc");
-    exit(1);
+    goto cleanup;
   }
-  recv_all(client_sock_fd, (char*)received_numbers, numbers_array_size);
+  if (recv_all(client_sock_fd, (char*)received_numbers, numbers_array_size) == -1) {
+    fprintf(stderr, "recv_all failed\n");
+    goto cleanup_received_numbers;
+  }
   int* sorted_numbers = malloc(numbers_array_size);
   if (!sorted_numbers) {
     perror("malloc");
-    exit(1);
+    goto cleanup_received_numbers;
   }
   memcpy(sorted_numbers, received_numbers, numbers_array_size);
   qsort(sorted_numbers, send_number, sizeof(int), compare_ints);
-  send_all(client_sock_fd, (char*)sorted_numbers, numbers_array_size);
+  if (send_all(client_sock_fd, (char*)sorted_numbers, numbers_array_size) == -1) {
+    fprintf(stderr, "send_all failed\n");
+    goto cleanup_sorted_numbers;
+  }
 
-  pthread_mutex_lock(&mutex);
+  pthread_mutex_lock(&output_mutex);
   printf("sending data: %d\n", send_number);
   print_array((const void*)received_numbers, sizeof(int), (size_t)send_number, "received_numbers: ", "", print_int);
   print_array((const void*)sorted_numbers, sizeof(int), (size_t)send_number, "sorted_numbers: ", "", print_int);
   printf("--------\n");
-  pthread_mutex_unlock(&mutex);
+  pthread_mutex_unlock(&output_mutex);
 
+cleanup_sorted_numbers:
+  free(sorted_numbers);
+cleanup_received_numbers:
+  free(received_numbers);
+cleanup:
   close(client_sock_fd);
+  pthread_mutex_lock(&client_counter_mutex);
+  active_clients--;
+  pthread_mutex_unlock(&client_counter_mutex);
+
   return NULL;
 }
 
@@ -80,7 +111,7 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  int sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+  sock_fd = socket(AF_INET, SOCK_STREAM, 0);
   if (sock_fd == -1) {
     perror("socket");
     return 1;
@@ -111,15 +142,28 @@ int main(int argc, char** argv) {
   }
   printf("listening...\n");
 
-  pthread_mutex_init(&mutex, NULL);
+  struct sigaction act = { 0 };
+  act.sa_handler = &sigaction_handler;
+  if (sigaction(SIGINT, &act, NULL) == -1) {
+    perror("sigaction");
+    exit(1);
+  }
+
+  pthread_mutex_init(&send_number_counter_mutex, NULL);
+  pthread_mutex_init(&output_mutex, NULL);
+  pthread_mutex_init(&client_counter_mutex, NULL);
   int address_length = sizeof(address);
-  while (1) {
+  while (working) {
     int* client_sock_fd = malloc(sizeof(int));
     if (!client_sock_fd) {
       perror("malloc");
       exit(1);
     }
     *client_sock_fd = accept(sock_fd, (struct sockaddr*)&address, (socklen_t*)&address_length);
+    if (*client_sock_fd == -1) {
+      perror("accept");
+      exit(1);
+    }
     pthread_t thread_id;
     int rv = pthread_create(&thread_id, NULL, client_handler, (void*)client_sock_fd);
     if (rv != 0) {
@@ -130,8 +174,12 @@ int main(int argc, char** argv) {
     }
   }
 
+  while (active_clients) {}
+
   close(sock_fd);
-  pthread_mutex_destroy(&mutex);
+  pthread_mutex_destroy(&send_number_counter_mutex);
+  pthread_mutex_destroy(&output_mutex);
+  pthread_mutex_destroy(&client_counter_mutex);
 
   return 0;
 }

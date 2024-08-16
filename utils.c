@@ -4,31 +4,33 @@
 
 #include "utils.h"
 
-void recv_all(int sock_fd, char* buffer, size_t length) {
+ssize_t recv_all(int sock_fd, char* buffer, size_t length) {
   size_t total_received = 0;
   while (total_received < length) {
     ssize_t received = recv(sock_fd, buffer + total_received, length - total_received, 0);
     if (received == -1) {
       perror("recv");
-      exit(1);
+      return -1;
     }
     if (!received) {
       break;
     }
     total_received += received;
   }
+  return total_received;
 }
 
-void send_all(int sock_fd, char* buffer, size_t length) {
+ssize_t send_all(int sock_fd, char* buffer, size_t length) {
   size_t total_sent = 0;
   while (total_sent < length) {
     ssize_t sent = send(sock_fd, buffer + total_sent, length - total_sent, 0);
     if (sent == -1) {
       perror("send");
-      exit(1);
+      return -1;
     }
     total_sent += sent;
   }
+  return total_sent;
 }
 
 int compare_ints(const void* a, const void* b) {

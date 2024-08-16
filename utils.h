@@ -1,9 +1,9 @@
 #ifndef UTILS_H
 #define UTILS_H
 
-void recv_all(int sock_fd, char* buffer, size_t length);
+ssize_t recv_all(int sock_fd, char* buffer, size_t length);
 
-void send_all(int sock_fd, char* buffer, size_t length);
+ssize_t send_all(int sock_fd, char* buffer, size_t length);
 
 int compare_ints(const void* a, const void* b);
 

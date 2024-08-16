@@ -20,7 +20,7 @@ struct thread_arg {
   struct addrinfo server_info;
 };
 
-int get_random_number() {
+int get_random_number(void) {
   /*
     [ref]
     - https://stackoverflow.com/a/49880109/7503647
@@ -57,7 +57,10 @@ void* request_handler(void* arg) {
     }
 
     int number;
-    recv_all(sock_fd, (char*)&number, sizeof(number));
+    if (recv_all(sock_fd, (char*)&number, sizeof(number)) == -1) {
+      fprintf(stderr, "recv_all failed\n");
+      exit(1);
+    }
     size_t numbers_array_size = sizeof(int) * number;
     int* random_numbers = malloc(numbers_array_size);
     if (!random_numbers) {
@@ -67,15 +70,20 @@ void* request_handler(void* arg) {
     for (int i = 0; i < number; i++) {
       random_numbers[i] = get_random_number();
     }
-    send_all(sock_fd, (char*)random_numbers, numbers_array_size);
+    if (send_all(sock_fd, (char*)random_numbers, numbers_array_size) == -1) {
+      fprintf(stderr, "send_all failed\n");
+      exit(1);
+    }
     int* sorted_numbers = malloc(numbers_array_size);
     if (!sorted_numbers) {
       perror("malloc");
       exit(1);
     }
-    recv_all(sock_fd, (char*)sorted_numbers, numbers_array_size);
+    if (recv_all(sock_fd, (char*)sorted_numbers, numbers_array_size) == -1) {
+      fprintf(stderr, "recv_all failed\n");
+      exit(1);
+    }
 
-    /* sacrifacing speed for this output */
     pthread_mutex_lock(&mutex);
     printf("[thread_id: %d] received data: %d\n", gettid(), number);
     print_array((const void*)random_numbers, sizeof(int), (size_t)number, "random_numbers: ", "", print_int);
