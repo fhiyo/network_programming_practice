@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <pthread.h>
 #include <time.h>
+#include <inttypes.h>
 
 #include "utils.h"
 
@@ -106,8 +107,8 @@ int main(int argc, char** argv) {
   char* server_name = argv[1];
   char* server_port = argv[2];
   /* TODO: handling invalid commandline arguments */
-  int request_number = atoi(argv[3]);
-  int client_number = atoi(argv[4]);
+  int request_number = strtoimax(argv[3], NULL, 0);
+  int client_number = strtoimax(argv[4], NULL, 0);
 
   srand(time(NULL));
   struct addrinfo hints;

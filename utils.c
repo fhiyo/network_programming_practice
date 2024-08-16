@@ -47,10 +47,6 @@ void print_array(const void* array, size_t element_size, size_t element_count, c
   printf("%s\n", trailer);
 }
 
-// void print_array(const void* array, size_t element_size, size_t element_count, const char* header, const char* trailer, void (*print_element)(const void*)) {
-//   print_array_inner(array, sizeof(array[0]), element_count, header, trailer, print_element);
-// };
-
 void print_int(const void* element) {
   printf("%d ", *(int*)element);
 }
